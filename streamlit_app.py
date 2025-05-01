@@ -19,57 +19,53 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Function to convert runtime strings to minutes
+def convert_runtime_to_minutes(runtime_str):
+    if pd.isna(runtime_str):
+        return np.nan
+    
+    # Convert string format like "2h 30min" or "1 hour 45 minutes" to minutes
+    hours = 0
+    minutes = 0
+    
+    # Check for hours
+    hour_match = re.search(r'(\d+)\s*(?:h|hour|hr)', str(runtime_str), re.IGNORECASE)
+    if hour_match:
+        hours = int(hour_match.group(1))
+    
+    # Check for minutes
+    minute_match = re.search(r'(\d+)\s*(?:m|min|minute)', str(runtime_str), re.IGNORECASE)
+    if minute_match:
+        minutes = int(minute_match.group(1))
+    
+    total_minutes = hours * 60 + minutes
+    return total_minutes if total_minutes > 0 else np.nan
+
 @st.cache_data
 def load_data():
+    url ='https://raw.githubusercontent.com/Ahmedhossam447/imdbapp/refs/heads/main/imdb_top_250.csv'
     try:
-        # For demo purposes, create sample data if file not found
-        try:
-            df = pd.read_csv("imdb_top_250_detailed.csv")
-        except:
-            # Create sample data with 50 movies
-            titles = ["The Shawshank Redemption", "The Godfather", "The Dark Knight", "The Godfather Part II", 
-                      "12 Angry Men", "Schindler's List", "Pulp Fiction", "The Lord of the Rings: The Return of the King",
-                      "The Good, the Bad and the Ugly", "Fight Club"]
-            years = [1994, 1972, 2008, 1974, 1957, 1993, 1994, 2003, 1966, 1999]
-            ratings = [9.3, 9.2, 9.0, 9.0, 8.9, 8.9, 8.9, 8.9, 8.8, 8.8]
-            directors = ["Frank Darabont", "Francis Ford Coppola", "Christopher Nolan", "Francis Ford Coppola",
-                         "Sidney Lumet", "Steven Spielberg", "Quentin Tarantino", "Peter Jackson", 
-                         "Sergio Leone", "David Fincher"]
-            genres = [["Drama"], ["Crime", "Drama"], ["Action", "Crime", "Drama"], ["Crime", "Drama"], 
-                      ["Crime", "Drama"], ["Biography", "Drama", "History"], ["Crime", "Drama"], 
-                      ["Action", "Adventure", "Drama"], ["Western"], ["Drama"]]
-            runtimes = ["142 min", "175 min", "152 min", "202 min", "96 min", 
-                        "195 min", "154 min", "201 min", "178 min", "139 min"]
-            
-            # Create sample data frame
-            sample_data = {
-                "Title": titles * 5,  # Repeat to get 50 movies
-                "Year": years * 5,
-                "Rating": ratings * 5,
-                "Director": directors * 5,
-                "Genre": genres * 5,
-                "Runtime": runtimes * 5
-            }
-            df = pd.DataFrame(sample_data)
-            
+        df = pd.read_csv(url)
+        
         # Clean and transform data
         df['Genre'] = df['Genre'].apply(lambda x: [g.strip() for g in re.split(',|;', str(x))] if isinstance(x, str) else x)
         df['Director'] = df['Director'].apply(lambda x: str(x).strip())
         
-        # Extract runtime as minutes
-        if 'Runtime' in df.columns:
-            df['Runtime_Minutes'] = df['Runtime'].apply(lambda x: int(re.search(r'\d+', str(x)).group()) if re.search(r'\d+', str(x)) else 120)
-        
         # Add decade column
         df['Decade'] = (df['Year'] // 10) * 10
         
+        # Convert runtime to minutes (add this new code)
+        if 'Runtime' in df.columns:
+            df['Runtime_Minutes'] = df['Runtime'].apply(convert_runtime_to_minutes)
+        
         return df
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"⚠️ حصلت مشكلة في تحميل البيانات من GitHub: {e}")
         return pd.DataFrame()
 
 # Load the data
 df = load_data()
+
 
 # Sidebar filters
 with st.sidebar:
@@ -93,9 +89,21 @@ with st.sidebar:
     rating_range = st.slider("Filter by Rating", float(df['Rating'].min()), float(df['Rating'].max()), 
                             (float(df['Rating'].min()), float(df['Rating'].max())))
     
+    # Runtime filter (add this if Runtime_Minutes exists)
+    if 'Runtime_Minutes' in df.columns:
+        runtime_min = int(df['Runtime_Minutes'].min()) if not df['Runtime_Minutes'].isnull().all() else 0
+        runtime_max = int(df['Runtime_Minutes'].max()) if not df['Runtime_Minutes'].isnull().all() else 300
+        runtime_range = st.slider("Filter by Runtime (minutes)", runtime_min, runtime_max, (runtime_min, runtime_max))
+    
     # Apply filters
     filtered_df = df[(df['Year'] >= year_range[0]) & (df['Year'] <= year_range[1]) & 
                     (df['Rating'] >= rating_range[0]) & (df['Rating'] <= rating_range[1])]
+    
+    # Apply runtime filter if available
+    if 'Runtime_Minutes' in df.columns:
+        filtered_df = filtered_df[(filtered_df['Runtime_Minutes'].isnull()) | 
+                                ((filtered_df['Runtime_Minutes'] >= runtime_range[0]) & 
+                                 (filtered_df['Runtime_Minutes'] <= runtime_range[1]))]
     
     if selected_genres:
         filtered_df = filtered_df[filtered_df['Genre'].apply(lambda x: any(genre in x for genre in selected_genres) if isinstance(x, list) else False)]
@@ -117,7 +125,7 @@ with col2:
     avg_rating = round(filtered_df['Rating'].mean(), 2) if not filtered_df.empty else 0
     st.metric("Average Rating", f"{avg_rating} ⭐")
 with col3:
-    if 'Runtime_Minutes' in filtered_df.columns and not filtered_df.empty:
+    if 'Runtime_Minutes' in filtered_df.columns and not filtered_df.empty and not filtered_df['Runtime_Minutes'].isnull().all():
         avg_runtime = round(filtered_df['Runtime_Minutes'].mean(), 0)
         st.metric("Average Runtime", f"{int(avg_runtime)} min")
     else:
@@ -248,7 +256,7 @@ elif option == '📅 Decade Trends' and not filtered_df.empty:
     
     # Calculate metrics by decade
     decade_cols = ['Decade', 'Avg Rating', 'Median Rating', 'Movie Count']
-    if 'Runtime_Minutes' in filtered_df.columns:
+    if 'Runtime_Minutes' in filtered_df.columns and not filtered_df['Runtime_Minutes'].isnull().all():
         decade_aggs = {
             'Rating': ['mean', 'median', 'count'],
             'Runtime_Minutes': ['mean', 'median']
@@ -285,8 +293,22 @@ elif option == '📅 Decade Trends' and not filtered_df.empty:
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Add runtime trend by decade if available
+    if 'Avg Runtime' in decade_stats.columns:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("Runtime Trends by Decade")
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=decade_stats['Decade'], y=decade_stats['Avg Runtime'],
+                                mode='lines+markers', name='Average Runtime', line=dict(color='#F5C518', width=3)))
+        fig.add_trace(go.Scatter(x=decade_stats['Decade'], y=decade_stats['Median Runtime'],
+                                mode='lines+markers', name='Median Runtime', line=dict(color='#121212', width=3)))
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-elif option == '⏱️ Runtime Analysis' and 'Runtime_Minutes' in filtered_df.columns and not filtered_df.empty:
+elif option == '⏱️ Runtime Analysis' and 'Runtime_Minutes' in filtered_df.columns and not filtered_df['Runtime_Minutes'].isnull().all():
     st.markdown('<h2 class="sub-header">⏱️ Runtime Analysis</h2>', unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
@@ -295,7 +317,8 @@ elif option == '⏱️ Runtime Analysis' and 'Runtime_Minutes' in filtered_df.co
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("Runtime Distribution")
         
-        fig = px.histogram(filtered_df, x='Runtime_Minutes', nbins=20, color_discrete_sequence=['#F5C518'])
+        fig = px.histogram(filtered_df.dropna(subset=['Runtime_Minutes']), x='Runtime_Minutes', 
+                           nbins=20, color_discrete_sequence=['#F5C518'])
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -304,7 +327,7 @@ elif option == '⏱️ Runtime Analysis' and 'Runtime_Minutes' in filtered_df.co
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("Runtime vs. Rating")
         
-        fig = px.scatter(filtered_df, x='Runtime_Minutes', y='Rating', color='Rating',
+        fig = px.scatter(filtered_df.dropna(subset=['Runtime_Minutes']), x='Runtime_Minutes', y='Rating', color='Rating',
                         hover_name='Title', hover_data=['Director', 'Year'])
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
@@ -317,13 +340,32 @@ elif option == '⏱️ Runtime Analysis' and 'Runtime_Minutes' in filtered_df.co
     
     with records_col1:
         st.subheader("Longest Movies")
-        longest_movies = filtered_df.sort_values(by='Runtime_Minutes', ascending=False).head(5)
+        longest_movies = filtered_df.dropna(subset=['Runtime_Minutes']).sort_values(by='Runtime_Minutes', ascending=False).head(5)
         st.dataframe(longest_movies[['Title', 'Director', 'Year', 'Runtime_Minutes', 'Rating']], use_container_width=True)
     
     with records_col2:
         st.subheader("Shortest Movies")
-        shortest_movies = filtered_df.sort_values(by='Runtime_Minutes').head(5)
+        shortest_movies = filtered_df.dropna(subset=['Runtime_Minutes']).sort_values(by='Runtime_Minutes').head(5)
         st.dataframe(shortest_movies[['Title', 'Director', 'Year', 'Runtime_Minutes', 'Rating']], use_container_width=True)
+    
+    # Add a runtime by genre visualization
+    st.subheader("Average Runtime by Genre")
+    
+    # Calculate average runtime by genre
+    genre_runtimes = {}
+    for genre in set([g for sublist in filtered_df['Genre'] for g in sublist if isinstance(g, str)]):
+        genre_movies = filtered_df[filtered_df['Genre'].apply(lambda x: genre in x if isinstance(x, list) else False)]
+        if not genre_movies['Runtime_Minutes'].isnull().all():
+            genre_runtimes[genre] = genre_movies['Runtime_Minutes'].mean()
+    
+    genre_runtime_df = pd.DataFrame({'Genre': list(genre_runtimes.keys()), 'Average Runtime': list(genre_runtimes.values())})
+    genre_runtime_df = genre_runtime_df.sort_values(by='Average Runtime', ascending=False).head(15)
+    
+    fig = px.bar(genre_runtime_df, y='Genre', x='Average Runtime', orientation='h', 
+                color='Average Runtime', text='Average Runtime')
+    fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+    fig.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
+    st.plotly_chart(fig, use_container_width=True)
     
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -342,7 +384,14 @@ elif option == '🔍 Custom Search' and not filtered_df.empty:
         if not results.empty:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.subheader(f"Found {len(results)} movies matching '{search_term}'")
-            st.dataframe(results[['Title', 'Director', 'Year', 'Rating', 'Genre']], use_container_width=True)
+            
+            # Include Runtime_Minutes in display if available
+            display_columns = ['Title', 'Director', 'Year', 'Rating']
+            if 'Runtime_Minutes' in results.columns:
+                display_columns.append('Runtime_Minutes')
+            display_columns.append('Genre')
+            
+            st.dataframe(results[display_columns], use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
             if len(results) == 1:
@@ -358,8 +407,8 @@ elif option == '🔍 Custom Search' and not filtered_df.empty:
                     st.markdown(f"**Year:** {movie['Year']}")
                 
                 with detail_col2:
-                    if 'Runtime_Minutes' in movie:
-                        st.markdown(f"**Runtime:** {movie['Runtime_Minutes']} minutes")
+                    if 'Runtime_Minutes' in movie and not pd.isna(movie['Runtime_Minutes']):
+                        st.markdown(f"**Runtime:** {int(movie['Runtime_Minutes'])} minutes")
                     st.markdown(f"**Genres:** {', '.join(movie['Genre']) if isinstance(movie['Genre'], list) else movie['Genre']}")
                 
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -368,3 +417,5 @@ elif option == '🔍 Custom Search' and not filtered_df.empty:
 else:
     if filtered_df.empty:
         st.warning("No data available with current filters. Please adjust your filters or load a valid dataset.")
+    elif option == '⏱️ Runtime Analysis' and ('Runtime_Minutes' not in filtered_df.columns or filtered_df['Runtime_Minutes'].isnull().all()):
+        st.warning("Runtime data is not available or all values are missing. Please check the dataset.")
